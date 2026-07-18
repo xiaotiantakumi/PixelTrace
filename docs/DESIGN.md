@@ -12,7 +12,7 @@ For installation and a quick-start example, see the [README](../README.md).
 
 PixelTrace is a reusable Swift Package that leaves an on-device debug recording of real camera footage for iOS apps whose main screen is a live camera preview.
 
-Apps of this kind — where bugs frequently depend on exactly what the camera was seeing — share a recurring diagnostic problem: text gets garbled, a page turn gets missed, recognition wobbles with lighting changes. Problems like these can't be root-caused after the fact unless the actual frame the pipeline processed can be inspected later.
+Apps of this kind — where bugs frequently depend on exactly what the camera was seeing — share a recurring diagnostic problem: text gets garbled, a tracked object slips out of frame, recognition wobbles with lighting changes. Problems like these can't be root-caused after the fact unless the actual frame the pipeline processed can be inspected later.
 
 PixelTrace writes the same `CVPixelBuffer` that the app's video pipeline is already processing out to a timeline on-device. Because the recorded artifact is the literal input to the pipeline — not a re-composited approximation of the screen — the recording functions as an instrument that reflects the real cause of a bug, rather than a guess at it.
 
@@ -42,11 +42,11 @@ Before building this library, a view-hierarchy-snapshot-based session-replay SDK
 
 First, that class of screen recording relies on `UIWindow.drawHierarchy(in:afterScreenUpdates:)`-style view-hierarchy snapshotting, which can only render hardware-composited layers such as `AVCaptureVideoPreviewLayer` as black or blank (the technical reason is covered in §2). For an app where the camera preview occupies nearly the whole screen, that means the one thing most worth debugging is exactly what fails to record.
 
-Second, that SDK's network visualization relied on globally swizzling `URLSessionTask.resume`, with a moderate runtime risk from KVO-based completion detection racing against async continuations, and cross-cutting side effects on every host app's networking path.
+Second, that SDK's network visualization relied on globally swizzling network-request completion callbacks, carrying a moderate runtime risk of racing against a host's own completion handling, and cross-cutting side effects on every host app's networking path.
 
 Third, it captured request and response bodies unmasked by default, up to a size cap. While authentication header values were masked separately, that leaves no protection for other sensitive content that might appear in bodies.
 
-PixelTrace carries these lessons into its own design: a commitment to raw pixel buffer recording (§2), explicit-call network helpers instead of interception (§11), and body capture that defaults to off with masking applied (§11).
+PixelTrace carries these lessons into its own design: a commitment to raw pixel buffer recording (§2), explicit-call network helpers instead of interception (§11), and header redaction paired with request/response body capture that defaults to off (§11).
 
 ---
 
@@ -125,7 +125,7 @@ The trade-off is that PixelTrace records the camera footage, not the UI drawn on
 
 PixelTrace splits into three modules.
 
-**PixelTraceCore**: a pure-logic layer that depends only on Foundation. It holds the Codable models, limit evaluation, deletion candidate selection, sequence naming, and time serialization. Importing CoreVideo or UIKit here is made to break the build, so the compiler enforces that this layer stays independent of capture and UI concerns. `swift test` runs here without a simulator, so the decision logic can be verified quickly.
+**PixelTraceCore**: a pure-logic layer that depends only on Foundation. It holds the Codable models, limit evaluation, deletion candidate selection, sequence naming, and time serialization. This layer's own target declares no dependency on CoreVideo or UIKit, and it is built for macOS as well as iOS — since UIKit isn't available on macOS, importing it here would break that build, so the compiler enforces that this layer stays independent of UI concerns. (CoreVideo itself is available on both platforms, so keeping it out of this layer is a design choice enforced by review and by PixelTraceCore's tests, not by a build failure.) `swift test` runs here without a simulator, so the decision logic can be verified quickly.
 
 **PixelTrace**: the layer responsible for capture and disk I/O. It receives `CVPixelBuffer`s, encodes JPEG, writes to the session directory, and exposes the public facade.
 
@@ -193,6 +193,13 @@ public enum PixelTrace {
 
     /// Appends an arbitrary marker to the timeline (e.g. a "reproduce bug" button).
     public static func logMarker(_ name: String, metadata: PixelTraceMetadata)
+
+    // MARK: Intentional thinning
+
+    /// Notifies PixelTrace that the host deliberately chose not to submit a frame
+    /// (e.g. during a stable stretch), so it can still be counted in
+    /// `skippedFrameCount` (§5.4) — distinct from frames dropped by backpressure.
+    public static func recordSkippedFrame()
 
     // MARK: State access (for UI polling)
 
@@ -279,9 +286,9 @@ let frame = PixelTraceFrame(
     orientation: .right,
     capturedAt: timestamp,
     metadata: [
-        "changeScore": 0.42,
-        "recognitionReason": "periodicSample",
-        "recognizedCharCount": 128
+        "sceneChangeScore": 0.42,
+        "captureReason": "periodicSample",
+        "detectedObjectCount": 128
     ]
 )
 ```
@@ -290,10 +297,10 @@ Building from `Encodable` suits a host that already has a typed sidecar struct:
 
 ```swift
 struct MyFrameNote: Encodable {
-    let recognizedText: String
-    let meanConfidence: Float
-    let lineCount: Int
-    let changeScore: Double?
+    let detectedLabel: String
+    let confidence: Float
+    let objectCount: Int
+    let sceneChangeScore: Double?
 }
 let frame = PixelTraceFrame(
     pixelBuffer: buffer, orientation: .right, capturedAt: ts,
@@ -518,7 +525,7 @@ Example:
   "eventCount": 34,
   "frameCount": 118,
   "metadata": {
-    "actualPreset": "hd4k",
+    "cameraPreset": "hd4k",
     "appVersion": "1.4.0",
     "bufferHeight": 2160,
     "bufferWidth": 3840
@@ -563,10 +570,10 @@ Example:
   "capturedAt": "2026-07-18T04:11:03.271Z",
   "jpegBytes": 1863402,
   "metadata": {
-    "changeScore": 0.42,
-    "meanConfidence": 0.87,
-    "recognitionReason": "periodicSample",
-    "recognizedCharCount": 412
+    "sceneChangeScore": 0.42,
+    "confidence": 0.87,
+    "captureReason": "periodicSample",
+    "detectedObjectCount": 412
   },
   "orientation": "right",
   "orientationRawValue": 6,
@@ -583,9 +590,9 @@ Example:
 Taps, network events, and markers are appended as line-delimited JSON (JSON Lines). Each line is one event, appended only, which keeps writes cheap and keeps the file naturally ordered chronologically. Every line shares a common envelope, and `type` determines the shape of `payload`.
 
 ```json
-{"type":"tap","timestamp":"2026-07-18T04:11:05.880Z","payload":{"x":196.5,"y":642.0,"windowWidth":393,"windowHeight":852,"screen":"reader","phase":"down","metadata":{}}}
-{"type":"network","timestamp":"2026-07-18T04:11:06.204Z","payload":{"endpoint":"/v1/messages","method":"POST","statusCode":200,"latencyMs":812.4,"requestHeaders":{"authorization":"***"},"error":null,"metadata":{"model":"opus"}}}
-{"type":"marker","timestamp":"2026-07-18T04:11:09.010Z","payload":{"name":"user_reported_bug","metadata":{"note":"page-turn detection missed here"}}}
+{"type":"tap","timestamp":"2026-07-18T04:11:05.880Z","payload":{"x":196.5,"y":642.0,"windowWidth":393,"windowHeight":852,"screen":"capture","phase":"down","metadata":{}}}
+{"type":"network","timestamp":"2026-07-18T04:11:06.204Z","payload":{"endpoint":"/v1/search","method":"POST","statusCode":200,"latencyMs":812.4,"requestHeaders":{"authorization":"***"},"error":null,"metadata":{"service":"backend"}}}
+{"type":"marker","timestamp":"2026-07-18T04:11:09.010Z","payload":{"name":"user_reported_bug","metadata":{"note":"recognition dropped out here"}}}
 ```
 
 Envelope schema:
@@ -802,7 +809,7 @@ What the section provides:
 
 - An enable/disable toggle, calling `PixelTrace.setEnabled(_:)`.
 - Explanatory copy (e.g. a note that footage of the surroundings will be captured, and to turn recording back off once done investigating; no automatic upload ever happens). The host can override this text.
-- Whatever host-specific inputs are supplied via `hostFields` (for example, a document-scanning app might add fields for document type, lighting condition, or page-turn count).
+- Whatever host-specific inputs are supplied via `hostFields` (for example, a document-scanning app might add fields for document type, lighting condition, or scan count).
 - Status display: storage path, frame count, cumulative size, skipped-frame count, dropped-frame count, elapsed time, stop reason — polled from `PixelTrace.currentStatus()` at `pollingInterval`.
 - A delete-all button (§8.3).
 
@@ -896,7 +903,7 @@ PixelTrace treats two clocks as a pair.
 
 **Wall clock (`Date`)**: a human-readable absolute time, used as the serialization basis. The frame sidecar's `capturedAt`, an event's `timestamp`, and the manifest's `startedAt` are all this wall clock.
 
-**Monotonic clock (`uptimeNanos`)**: a monotonically increasing value since device boot, taken from `CLOCK_MONOTONIC_RAW`. Because the wall clock can jump due to time sync or time zone changes, this is used alongside it for strictly ordering frame or event intervals. The manifest holds the monotonic-clock value at session start (`startedAtUptimeNanos`) as an anchor.
+**Monotonic clock (`uptimeNanos`)**: a monotonically increasing value since device boot, taken from `CLOCK_MONOTONIC_RAW`. Because the wall clock can jump due to time sync or time zone changes, this is used alongside it for strictly ordering frame or event intervals. Note that on Darwin, `CLOCK_MONOTONIC_RAW` pauses while the device is asleep, so elapsed monotonic time across a sleep/wake cycle understates real elapsed time — for a single recording session (typically well under the sleep timeout) this isn't a practical concern, but it's worth knowing if you compare monotonic deltas across a suspend. The manifest holds the monotonic-clock value at session start (`startedAtUptimeNanos`) as an anchor.
 
 ### 10.2 Unified serialization
 
@@ -1069,7 +1076,7 @@ let package = Package(
     targets: [
         .target(name: "PixelTraceCore"),
         .target(name: "PixelTrace", dependencies: ["PixelTraceCore"]),
-        .target(name: "PixelTraceUI", dependencies: ["PixelTrace"]),
+        .target(name: "PixelTraceUI", dependencies: ["PixelTrace", "PixelTraceCore"]),
         .testTarget(name: "PixelTraceCoreTests", dependencies: ["PixelTraceCore"]),
         .testTarget(name: "PixelTraceTests", dependencies: ["PixelTrace"]),
     ]
@@ -1115,4 +1122,4 @@ Finalize `PixelTraceClock`'s unified serialization and usage examples for hosts.
 Adopt PixelTrace in a real host app, replacing or wrapping any prior bespoke recording implementation, and validate the design against real-world use.
 
 **Phase 7: Second host app integration and documentation polish**
-Follow the zero-integration steps (see the README's Quick Start) in a second host app, and fold anything that was unclear back into this documentation.
+Follow the from-scratch integration steps (see the README's Quick Start) in a second host app, and fold anything that was unclear back into this documentation.

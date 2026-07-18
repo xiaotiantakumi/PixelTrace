@@ -6,7 +6,7 @@ PixelTrace is a Swift Package that captures the exact `CVPixelBuffer` frames you
 
 ## Why
 
-Apps that process camera video continuously — reading text, detecting objects, scanning documents — have a recurring debugging problem: most bugs depend on *what the camera actually saw*. Blurry frames, missed page turns, exposure-dependent recognition failures — these can't be diagnosed after the fact unless you can go back and look at the actual frame the pipeline processed.
+Apps that process camera video continuously — reading text, detecting objects, scanning documents — have a recurring debugging problem: most bugs depend on *what the camera actually saw*. Blurry frames, a detector losing its lock between frames, exposure-dependent recognition failures — these can't be diagnosed after the fact unless you can go back and look at the actual frame the pipeline processed.
 
 Standard session-replay tooling doesn't help here. Screen-recording approaches based on view-hierarchy snapshots (e.g. `UIWindow.drawHierarchy(in:afterScreenUpdates:)`) cannot capture hardware-composited layers like `AVCaptureVideoPreviewLayer` — the camera preview renders as black or blank. For an app whose main screen *is* the camera preview, that's exactly the part you need to see. See [`docs/DESIGN.md`](docs/DESIGN.md) for the full explanation of why this is a structural limitation, not an implementation bug.
 
@@ -23,7 +23,7 @@ PixelTrace takes a different approach: it records the same pixel buffer your pip
 ## Features
 
 - **Raw pixel buffer recording** — records the actual `CVPixelBuffer` your pipeline processes, encoded as JPEG at up to 4K with a configurable quality, alongside a JSON sidecar describing dimensions, pixel format, orientation, and host-defined metadata.
-- **Structured timeline** — tap positions, network events (with header/body redaction), and arbitrary markers are appended to a single JSON Lines timeline (`events.jsonl`), correlated with recorded frames by timestamp.
+- **Structured timeline** — tap positions, network events (with header redaction and opt-in, size-capped body capture), and arbitrary markers are appended to a single JSON Lines timeline (`events.jsonl`), correlated with recorded frames by timestamp.
 - **DEBUG-on by default, Release-off by construction** — recording defaults to on in DEBUG builds and off in Release builds; in Release, the recording implementation itself compiles down to a no-op, so the capture and disk I/O code isn't present in the shipped binary.
 - **Bounded storage** — a per-session cap (duration and total bytes) and a cross-session retention cap (max number of retained sessions) keep on-device storage from growing unbounded, on top of a one-tap "delete all" control.
 - **Zero external dependencies** — built entirely on Apple's standard frameworks (Foundation, CoreVideo, CoreImage, os), so it adds no third-party dependency footprint to a host app.
@@ -33,8 +33,8 @@ PixelTrace takes a different approach: it records the same pixel buffer your pip
 ## Requirements
 
 - iOS 16.0+
-- `PixelTraceCore` (the dependency-free logic layer) also builds and tests on macOS 13+, so its pure logic — limits, retention, pruning, naming, clock — can be unit tested without a simulator.
 - Swift 5.9+ / Swift tools version 5.9
+- macOS 13+ (optional — only needed if you want to build and test the dependency-free `PixelTraceCore` logic layer — limits, retention, pruning, naming, clock — without an iOS simulator)
 
 ## Installation
 
@@ -86,8 +86,8 @@ await PixelTrace.beginSession(PixelTraceSessionContext(
 
 // 3. In your capture callback, alongside your existing pipeline call:
 func captureOutput(_ output: AVCaptureOutput,
-                    didOutput sampleBuffer: CMSampleBuffer,
-                    from connection: AVCaptureConnection) {
+                   didOutput sampleBuffer: CMSampleBuffer,
+                   from connection: AVCaptureConnection) {
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
     // Your existing pipeline call — unchanged.
