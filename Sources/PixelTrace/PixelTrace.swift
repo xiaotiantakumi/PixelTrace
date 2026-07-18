@@ -137,6 +137,34 @@ public enum PixelTrace {
         #endif
     }
 
+    // MARK: - Timeline events
+
+    /// Appends a tap event to the session timeline (spec §9). No-op in Release.
+    public static func logTap(_ event: PixelTraceTapEvent) {
+        #if DEBUG
+        appendTimelineEvent(.tap(timestamp: event.timestamp, payload: event.payload))
+        #endif
+    }
+
+    /// Appends an arbitrary named marker to the session timeline (e.g. a "reproduce bug"
+    /// button). No-op in Release.
+    public static func logMarker(_ name: String, metadata: PixelTraceMetadata = .empty) {
+        #if DEBUG
+        appendTimelineEvent(.marker(
+            timestamp: Date(),
+            payload: PixelTraceMarkerPayload(name: name, metadata: metadata)
+        ))
+        #endif
+    }
+
+    #if DEBUG
+    private static func appendTimelineEvent(_ event: PixelTraceTimelineEvent) {
+        guard isEnabled else { return }
+        guard let writer = writerLock.withLock({ $0 }) else { return }
+        Task { await writer.appendEvent(event) }
+    }
+    #endif
+
     // MARK: - Status
 
     /// A snapshot of the current recording state, or nil when there is no session.

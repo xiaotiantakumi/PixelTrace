@@ -210,6 +210,34 @@ actor PixelTraceSessionWriter {
         writeManifest()
     }
 
+    // MARK: - Timeline events
+
+    /// Appends one timeline event as a JSON Lines record to `events.jsonl`.
+    func appendEvent(_ event: PixelTraceTimelineEvent) {
+        guard !isStopped else { return }
+        guard ensureDirectoryExists() else { return }
+        guard let line = try? PixelTraceJSONCoding.makeEncoder().encode(event) else { return }
+        let url = directory.appendingPathComponent("events.jsonl", isDirectory: false)
+        appendLine(line, to: url)
+        eventCount += 1
+        manifest.eventCount = eventCount
+        writeManifest()
+    }
+
+    private func appendLine(_ data: Data, to url: URL) {
+        var payload = data
+        payload.append(0x0A) // newline
+
+        if fileManager.fileExists(atPath: url.path) {
+            guard let handle = try? FileHandle(forWritingTo: url) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: payload)
+        } else {
+            writeFile(payload, to: url)
+        }
+    }
+
     // MARK: - Stop
 
     func stopByUser() { finalize(stopReason: .userStopped) }
