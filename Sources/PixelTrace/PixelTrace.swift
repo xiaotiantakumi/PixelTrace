@@ -4,7 +4,7 @@ import PixelTraceCore
 
 /// The package version stamped into each manifest.
 enum PixelTracePackageVersion {
-    static let current = "0.1.0"
+    static let current = "0.2.0"
 }
 
 /// Public facade for enabling recording, managing sessions, and submitting frames.
@@ -162,20 +162,41 @@ public enum PixelTrace {
     /// `captureBodies` is enabled). No-op in Release.
     public static func logNetworkEvent(_ event: PixelTraceNetworkEvent) {
         #if DEBUG
-        let redaction = configurationLock.withLock { $0.network }
-        let payload = PixelTraceNetworkPayload(
-            endpoint: redaction.sanitizedEndpoint(event.endpoint),
-            method: event.method,
-            statusCode: event.statusCode,
-            latencyMs: event.latencyMs,
-            requestHeaders: redaction.redactedHeaders(event.requestHeaders),
-            responseHeaders: redaction.redactedHeaders(event.responseHeaders),
-            requestBodyPreview: redaction.bodyPreview(event.requestBodyPreview),
-            responseBodyPreview: redaction.bodyPreview(event.responseBodyPreview),
-            error: event.error,
-            metadata: event.metadata
-        )
-        appendTimelineEvent(.network(timestamp: event.timestamp, payload: payload))
+        let configuration = configurationLock.withLock { $0 }
+        let payload: PixelTraceNetworkPayload
+        let timestamp: Date
+        if let customNetworkRedactor = configuration.customNetworkRedactor {
+            let redacted = customNetworkRedactor(event)
+            payload = PixelTraceNetworkPayload(
+                endpoint: redacted.endpoint,
+                method: redacted.method,
+                statusCode: redacted.statusCode,
+                latencyMs: redacted.latencyMs,
+                requestHeaders: redacted.requestHeaders,
+                responseHeaders: redacted.responseHeaders,
+                requestBodyPreview: redacted.requestBodyPreview,
+                responseBodyPreview: redacted.responseBodyPreview,
+                error: redacted.error,
+                metadata: redacted.metadata
+            )
+            timestamp = redacted.timestamp
+        } else {
+            let redaction = configuration.network
+            payload = PixelTraceNetworkPayload(
+                endpoint: redaction.sanitizedEndpoint(event.endpoint),
+                method: event.method,
+                statusCode: event.statusCode,
+                latencyMs: event.latencyMs,
+                requestHeaders: redaction.redactedHeaders(event.requestHeaders),
+                responseHeaders: redaction.redactedHeaders(event.responseHeaders),
+                requestBodyPreview: redaction.bodyPreview(event.requestBodyPreview),
+                responseBodyPreview: redaction.bodyPreview(event.responseBodyPreview),
+                error: event.error,
+                metadata: event.metadata
+            )
+            timestamp = event.timestamp
+        }
+        appendTimelineEvent(.network(timestamp: timestamp, payload: payload))
         #endif
     }
 

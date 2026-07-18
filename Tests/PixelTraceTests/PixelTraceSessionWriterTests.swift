@@ -44,7 +44,7 @@ final class PixelTraceSessionWriterTests: XCTestCase {
         XCTAssertEqual(manifest.sessionId, "s1")
         XCTAssertEqual(manifest.frameCount, 0)
         XCTAssertEqual(manifest.startedAtUptimeNanos, 42)
-        XCTAssertEqual(manifest.pixelTraceVersion, "0.1.0")
+        XCTAssertEqual(manifest.pixelTraceVersion, "0.2.0")
         XCTAssertNil(manifest.stopReason)
     }
 

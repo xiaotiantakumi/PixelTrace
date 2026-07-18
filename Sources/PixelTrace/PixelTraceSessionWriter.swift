@@ -99,6 +99,14 @@ actor PixelTraceSessionWriter {
         guard ensureDirectoryExists() else { return }
         applyBackupExclusion()
         writeManifest()
+        configuration.observer?.pixelTraceDidBeginSession(
+            PixelTraceObservedSession(
+                sessionId: sessionId,
+                directoryPath: directory.path,
+                startedAt: startedAt,
+                metadata: manifest.metadata
+            )
+        )
     }
 
     // MARK: - Frame submission (backpressure)
@@ -156,11 +164,18 @@ actor PixelTraceSessionWriter {
         }
 
         let basename = PixelTraceFrameNaming.basename(sequence: sequence)
-        let jpegURL = directory.appendingPathComponent("\(basename).jpg", isDirectory: false)
+        let ext = configuration.frameEncoder?.fileExtension ?? "jpg"
+        let frameURL = directory.appendingPathComponent("\(basename).\(ext)", isDirectory: false)
         let jsonURL = directory.appendingPathComponent("\(basename).json", isDirectory: false)
 
-        guard let jpegData = renderJPEG(frame) else { return }
-        guard writeFile(jpegData, to: jpegURL) else { return }
+        let frameData: Data?
+        if let encoder = configuration.frameEncoder {
+            frameData = encoder.encode(frame.pixelBuffer, orientation: frame.orientation)
+        } else {
+            frameData = renderJPEG(frame)
+        }
+        guard let frameData else { return }
+        guard writeFile(frameData, to: frameURL) else { return }
 
         let pixelFormat = CVPixelBufferGetPixelFormatType(frame.pixelBuffer)
         let sidecar = PixelTraceFrameSidecar(
@@ -172,17 +187,28 @@ actor PixelTraceSessionWriter {
             pixelFormatRawValue: pixelFormat,
             pixelWidth: CVPixelBufferGetWidth(frame.pixelBuffer),
             pixelHeight: CVPixelBufferGetHeight(frame.pixelBuffer),
-            jpegBytes: jpegData.count,
+            jpegBytes: frameData.count,
             metadata: frame.metadata
         )
         guard let jsonData = try? PixelTraceJSONCoding.makeEncoder().encode(sidecar) else { return }
         guard writeFile(jsonData, to: jsonURL) else { return }
 
         frameCount += 1
-        totalBytes += jpegData.count + jsonData.count
+        totalBytes += frameData.count + jsonData.count
         manifest.frameCount = frameCount
         manifest.totalBytes = totalBytes
         writeManifest()
+
+        configuration.observer?.pixelTraceDidWriteFrame(
+            PixelTraceObservedFrame(
+                sessionId: sessionId,
+                sequence: sequence,
+                fileURL: frameURL,
+                encodedData: frameData,
+                byteCount: frameData.count,
+                capturedAt: frame.capturedAt
+            )
+        )
 
         if let reason = PixelTraceLimitEvaluator.stopReason(
             elapsed: elapsed,
@@ -256,6 +282,16 @@ actor PixelTraceSessionWriter {
         manifest.stopReason = stopReason.rawValue
         manifest.endedAt = Date()
         writeManifest()
+        configuration.observer?.pixelTraceDidEndSession(
+            PixelTraceObservedSessionEnd(
+                sessionId: sessionId,
+                directoryPath: directory.path,
+                frameCount: frameCount,
+                totalBytes: totalBytes,
+                stopReason: stopReason,
+                endedAt: manifest.endedAt ?? Date()
+            )
+        )
     }
 
     // MARK: - Status

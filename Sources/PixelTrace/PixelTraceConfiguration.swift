@@ -22,6 +22,12 @@ public struct PixelTraceConfiguration: @unchecked Sendable {
     public var excludeFromBackup: Bool
     /// File protection applied to written files (applied on iOS; a no-op elsewhere). Default `.complete`.
     public var fileProtection: FileProtectionType
+    /// Custom frame encoder. When nil, the built-in JPEG path is used.
+    public var frameEncoder: PixelTraceFrameEncoding?
+    /// Custom network redactor. When set, built-in field-level redaction is skipped.
+    public var customNetworkRedactor: (@Sendable (PixelTraceNetworkEvent) -> PixelTraceNetworkEvent)?
+    /// Lifecycle observer for session begin, frame writes, and session end.
+    public var observer: PixelTraceObserving?
 
     public init(
         rootDirectory: URL? = nil,
@@ -33,7 +39,10 @@ public struct PixelTraceConfiguration: @unchecked Sendable {
         network: PixelTraceNetworkRedaction = .default,
         initiallyEnabled: Bool = PixelTrace.defaultEnabled,
         excludeFromBackup: Bool = true,
-        fileProtection: FileProtectionType = .complete
+        fileProtection: FileProtectionType = .complete,
+        frameEncoder: PixelTraceFrameEncoding? = nil,
+        customNetworkRedactor: (@Sendable (PixelTraceNetworkEvent) -> PixelTraceNetworkEvent)? = nil,
+        observer: PixelTraceObserving? = nil
     ) {
         self.rootDirectory = rootDirectory
         self.limits = limits
@@ -45,6 +54,9 @@ public struct PixelTraceConfiguration: @unchecked Sendable {
         self.initiallyEnabled = initiallyEnabled
         self.excludeFromBackup = excludeFromBackup
         self.fileProtection = fileProtection
+        self.frameEncoder = frameEncoder
+        self.customNetworkRedactor = customNetworkRedactor
+        self.observer = observer
     }
 
     public static let `default` = PixelTraceConfiguration()
