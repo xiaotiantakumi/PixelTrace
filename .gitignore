@@ -1,6 +1,9 @@
 # Private working notes — not for the public repo
 .private/
 
+# Local tooling state (scheduled tasks lock, launch configs, etc.)
+.claude/
+
 # Swift / Xcode
 .build/
 .swiftpm/
