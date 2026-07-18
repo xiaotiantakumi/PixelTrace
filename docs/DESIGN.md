@@ -1123,3 +1123,44 @@ Adopt PixelTrace in a real host app, replacing or wrapping any prior bespoke rec
 
 **Phase 7: Second host app integration and documentation polish**
 Follow the from-scratch integration steps (see the README's Quick Start) in a second host app, and fold anything that was unclear back into this documentation.
+
+## 15. Extensibility
+
+PixelTrace is primarily a personal debugging instrument, and the most valuable use cases are the ones a general-purpose tool cannot anticipate. To let a host adapt the recorder to those cases without forking it, three extension points are exposed on `PixelTraceConfiguration`. All three are additive and optional: leaving them unset preserves the default behavior described in the preceding sections. By design, the recorder does not attempt to guard against misuse of these hooks — the correctness and privacy of a custom hook are the host's responsibility. The guiding constraint is the one from §1: enable debugging that ordinary tools cannot, and add no abstraction that does not serve that goal.
+
+### 15.1 Frame encoding strategy (`PixelTraceFrameEncoding`)
+
+By default each frame is encoded as JPEG by `PixelTraceJPEGRenderer`, using the configuration's `jpegQuality` and `jpegMaxLongEdge`, and written as `frame_NNNNNN.jpg`. A host can substitute its own encoder by setting `configuration.frameEncoder` to any type conforming to:
+
+```swift
+public protocol PixelTraceFrameEncoding: Sendable {
+    var fileExtension: String { get }
+    func encode(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> Data?
+}
+```
+
+The writer uses the encoder's `fileExtension` for the frame file's suffix and its `encode(_:orientation:)` output as the file's bytes; the sidecar JSON and all other bookkeeping are unchanged. This lets a host record lossless PNG, burn a debug overlay into the frame, or apply a domain-specific codec. When `frameEncoder` is `nil` (the default), the built-in JPEG path is used verbatim, including its shared `CIContext`. `PixelTraceJPEGFrameEncoder` is provided as the reified default and as a template for wrapping the built-in renderer.
+
+### 15.2 Custom network redaction (`customNetworkRedactor`)
+
+By default `logNetworkEvent` applies field-level redaction (§11): known auth headers are masked, query strings are stripped, and bodies are dropped unless `captureBodies` is enabled. A host that needs different rules — masking a bespoke token header, hashing an identifier, or keeping a body it knows to be safe — can set:
+
+```swift
+public var customNetworkRedactor: (@Sendable (PixelTraceNetworkEvent) -> PixelTraceNetworkEvent)?
+```
+
+When set, this closure completely replaces the built-in redaction: PixelTrace passes it the event, records the returned event's fields verbatim, and performs no header masking, query stripping, or body gating of its own. Because the closure decides exactly what is written, the host owns the privacy guarantee for network events; the default (`nil`) keeps the safe built-in behavior. This hook lives on `PixelTraceConfiguration` rather than on `PixelTraceNetworkRedaction` because the event type belongs to the capture layer, while the redaction value type is part of the dependency-free core (§13) and is `Equatable` — keeping the closure out of the core preserves both the module layering and that value semantics.
+
+### 15.3 Lifecycle observation (`PixelTraceObserving`)
+
+To let a host react to recording as it happens — stream frames to a live preview, mirror events into its own logging, or drive custom instrumentation — a host can set `configuration.observer` to any type conforming to:
+
+```swift
+public protocol PixelTraceObserving: Sendable {
+    func pixelTraceDidBeginSession(_ session: PixelTraceObservedSession)
+    func pixelTraceDidWriteFrame(_ frame: PixelTraceObservedFrame)
+    func pixelTraceDidEndSession(_ summary: PixelTraceObservedSessionEnd)
+}
+```
+
+The observer is invoked from inside the writer actor at three points: after a session's initial manifest is written, after each frame and its sidecar are written (the callback carries the encoded frame `Data`, its on-disk URL, the sequence number, and the capture timestamp), and once when the session is finalized (with the stop reason and final counts). Crucially, these calls are made from the writer's serialized, off-capture-thread context, never from `submit(_:)` — so an observer, however slow, cannot block the host's capture thread. A slow observer can only slow the writer's own drain, which is already governed by the backpressure contract of §3.2 (excess frames are dropped and counted, never blocked on).

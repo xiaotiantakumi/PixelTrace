@@ -29,6 +29,7 @@ PixelTrace takes a different approach: it records the same pixel buffer your pip
 - **Zero external dependencies** — built entirely on Apple's standard frameworks (Foundation, CoreVideo, CoreImage, os), so it adds no third-party dependency footprint to a host app.
 - **Non-blocking by design** — `submit(_:)` returns immediately from the capture thread; encoding and disk I/O happen off to the side, with backpressure that drops frames (and counts the drops) rather than stalling your pipeline.
 - **Always-visible recording indicator** — a small, tap-through "REC" indicator so recording is never silently happening in the background.
+- **Customizable by design** — swap the frame encoder (e.g. lossless PNG or overlay-burned frames), replace network redaction with your own rules, or observe the session/frame lifecycle to stream frames into your own live view. See [`docs/DESIGN.md`](docs/DESIGN.md) §15.
 
 ## Requirements
 
