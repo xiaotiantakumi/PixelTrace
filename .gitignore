@@ -1,0 +1,13 @@
+# Private working notes — not for the public repo
+.private/
+
+# Swift / Xcode
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+DerivedData/
+.DS_Store
+*.moved-aside
+
+# SwiftPM resolved deps are fine to track for an app but this is a library; keep untracked during early dev
+Package.resolved
