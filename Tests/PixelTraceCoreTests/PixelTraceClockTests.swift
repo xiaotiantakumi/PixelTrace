@@ -47,4 +47,12 @@ final class PixelTraceClockTests: XCTestCase {
         let timestamp = PixelTraceClock.now()
         XCTAssertGreaterThan(timestamp.uptimeNanos, 0)
     }
+
+    func testTimestampHelperIsCanonicalAndParseable() {
+        let stamp = PixelTraceClock.timestamp()
+        XCTAssertTrue(stamp.hasSuffix("Z"))
+        XCTAssertNotNil(PixelTraceClock.date(from: stamp))
+        let pattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+        XCTAssertNotNil(stamp.range(of: pattern, options: .regularExpression))
+    }
 }

@@ -39,4 +39,11 @@ public enum PixelTraceClock {
     public static func date(from string: String) -> Date? {
         formatter.date(from: string)
     }
+
+    /// Convenience for host log lines: the current wall-clock time in the canonical string form.
+    /// Hosts prefix their log lines with this so log timestamps line up with recorded frame and
+    /// event timestamps (spec §10.3).
+    public static func timestamp() -> String {
+        string(from: Date())
+    }
 }
