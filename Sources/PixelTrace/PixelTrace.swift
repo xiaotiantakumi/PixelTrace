@@ -157,6 +157,28 @@ public enum PixelTrace {
         #endif
     }
 
+    /// Appends a network event to the session timeline, applying the configured redaction
+    /// (known auth headers masked, query strings stripped, bodies dropped unless
+    /// `captureBodies` is enabled). No-op in Release.
+    public static func logNetworkEvent(_ event: PixelTraceNetworkEvent) {
+        #if DEBUG
+        let redaction = configurationLock.withLock { $0.network }
+        let payload = PixelTraceNetworkPayload(
+            endpoint: redaction.sanitizedEndpoint(event.endpoint),
+            method: event.method,
+            statusCode: event.statusCode,
+            latencyMs: event.latencyMs,
+            requestHeaders: redaction.redactedHeaders(event.requestHeaders),
+            responseHeaders: redaction.redactedHeaders(event.responseHeaders),
+            requestBodyPreview: redaction.bodyPreview(event.requestBodyPreview),
+            responseBodyPreview: redaction.bodyPreview(event.responseBodyPreview),
+            error: event.error,
+            metadata: event.metadata
+        )
+        appendTimelineEvent(.network(timestamp: event.timestamp, payload: payload))
+        #endif
+    }
+
     #if DEBUG
     private static func appendTimelineEvent(_ event: PixelTraceTimelineEvent) {
         guard isEnabled else { return }
